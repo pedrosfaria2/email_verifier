@@ -20,7 +20,13 @@ services:
     ports:
       - '5672:5672'
       - '15672:15672'
+    environment:
+      - RABBIT_URL=amqp://guest:guest@localhost:5672/
+      - DATABASE_URL=postgresql://emailverifier:emailverifier@localhost:5555/registration_dev
+      - REGISTRATION_REQUEST_QUEUE=registration-request
+      - REGISTRATION_REQUEST_ROUTING_KEY=42
     volumes:
       - ./.docker-data/.rabbit-data:/var/lib/rabbitmq/
       - ./.docker-data/.rabbit-log:/var/log/rabbitmq
-      - ./.rabbit-plugins:/etc/rabbitmq/enabled_plugins
+    command: >
+      bash -c "rabbitmq-plugins enable rabbitmq_consistent_hash_exchange && rabbitmq-server"

@@ -24,6 +24,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.slf4j.LoggerFactory
 import java.net.URI
+import java.security.MessageDigest
 import java.util.*
 
 class App
@@ -44,33 +45,39 @@ fun main(): Unit = runBlocking {
     val registrationRequestGateway = RegistrationRequestDataGateway(dbTemplate)
     val registrationGateway = RegistrationDataGateway(dbTemplate)
 
+    // Define a notification exchange of type direct
     val registrationNotificationExchange = RabbitExchange(
         name = "registration-notification-exchange",
         type = "direct",
         routingKeyGenerator = { _: String -> "42" },
     )
+    // Define a queue for notifications
     val registrationNotificationQueue = RabbitQueue("registration-notification")
+    // Bind the queue to the exchange
     connectionFactory.declareAndBind(exchange = registrationNotificationExchange, queue = registrationNotificationQueue, routingKey = "42")
 
+    // Define a consistent hash exchange for registration requests
     val registrationRequestExchange = RabbitExchange(
-        // TODO - rename the request exchange (since you've already declared a direct exchange under the current name)
-        name = "registration-request-exchange",
-        // TODO - use a consistent hash exchange (x-consistent-hash)
-        type = "direct",
-        // TODO - calculate a routing key based on message content
-        routingKeyGenerator = @Suppress("UNUSED_ANONYMOUS_PARAMETER") { message: String -> "42" },
+        name = "registration-request-consistent-hash-exchange",
+        type = "x-consistent-hash",
+        routingKeyGenerator = { message: String -> calculateRoutingKey(message) },
     )
-    // TODO - read the queue name from the environment
-    val registrationRequestQueue = RabbitQueue("registration-request")
-    // TODO - read the routing key from the environment
-    connectionFactory.declareAndBind(exchange = registrationRequestExchange, queue = registrationRequestQueue, routingKey = "42")
+    // Read the queue name from the environment, default to "registration-request"
+    val registrationRequestQueueName = System.getenv("REGISTRATION_REQUEST_QUEUE") ?: "registration-request"
+    val registrationRequestQueue = RabbitQueue(registrationRequestQueueName)
+    // Read the routing key from the environment, default to "42"
+    val routingKey = System.getenv("REGISTRATION_REQUEST_ROUTING_KEY") ?: "42"
+    // Bind the queue to the consistent hash exchange
+    connectionFactory.declareAndBind(exchange = registrationRequestExchange, queue = registrationRequestQueue, routingKey = routingKey)
 
+    // Start listening for registration requests
     listenForRegistrationRequests(
         connectionFactory,
         registrationRequestGateway,
         registrationNotificationExchange,
         registrationRequestQueue
     )
+    // Start the registration server
     registrationServer(
         port,
         registrationRequestGateway,
@@ -137,4 +144,11 @@ fun CoroutineScope.listenForRegistrationRequests(
             registrationRequestService.generateCodeAndPublish(email)
         }
     }
+}
+
+// Calculate the routing key using MD5 hash
+fun calculateRoutingKey(message: String): String {
+    val md = MessageDigest.getInstance("MD5")
+    val hashBytes = md.digest(message.toByteArray())
+    return hashBytes.joinToString("") { "%02x".format(it) }
 }
